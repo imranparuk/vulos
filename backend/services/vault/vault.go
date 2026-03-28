@@ -1,0 +1,198 @@
+package vault
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"log"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"sync"
+	"time"
+
+	"vulos/backend/internal/storage"
+)
+
+// Vault wraps Restic for silent, continuous backups to S3-compatible storage.
+type Vault struct {
+	s3       *storage.S3Config
+	password string
+	dataDir  string // directory to back up (e.g., /home or user data dir)
+	mu       sync.Mutex
+	status   Status
+}
+
+type Status struct {
+	Initialized bool      `json:"initialized"`
+	LastBackup  time.Time `json:"last_backup,omitempty"`
+	LastError   string    `json:"last_error,omitempty"`
+	Snapshots   int       `json:"snapshots"`
+	Running     bool      `json:"running"`
+}
+
+type Snapshot struct {
+	ID       string    `json:"short_id"`
+	Time     time.Time `json:"time"`
+	Hostname string    `json:"hostname"`
+	Paths    []string  `json:"paths"`
+}
+
+func New(s3 *storage.S3Config, dataDir string) *Vault {
+	return &Vault{
+		s3:       s3,
+		password: getenv("RESTIC_PASSWORD", "vulos-default-key"),
+		dataDir:  dataDir,
+	}
+}
+
+// Init initializes the Restic repository if not already done.
+func (v *Vault) Init(ctx context.Context) error {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+
+	if !v.s3.Configured() {
+		return fmt.Errorf("s3 storage not configured")
+	}
+
+	// Check if repo exists
+	cmd := v.resticCmd(ctx, "snapshots", "--json")
+	if err := cmd.Run(); err == nil {
+		v.status.Initialized = true
+		return nil
+	}
+
+	// Initialize new repo
+	cmd = v.resticCmd(ctx, "init")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		v.status.LastError = string(out)
+		return fmt.Errorf("restic init failed: %s", out)
+	}
+
+	v.status.Initialized = true
+	log.Printf("[vault] repository initialized")
+	return nil
+}
+
+// Backup performs a silent snapshot of the data directory.
+func (v *Vault) Backup(ctx context.Context) error {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+
+	if !v.status.Initialized {
+		return fmt.Errorf("vault not initialized")
+	}
+
+	v.status.Running = true
+	defer func() { v.status.Running = false }()
+
+	cmd := v.resticCmd(ctx, "backup", v.dataDir, "--json", "--exclude-caches")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		v.status.LastError = string(out)
+		return fmt.Errorf("backup failed: %s", out)
+	}
+
+	v.status.LastBackup = time.Now()
+	v.status.LastError = ""
+	log.Printf("[vault] backup complete")
+	return nil
+}
+
+// Snapshots lists all available snapshots.
+func (v *Vault) Snapshots(ctx context.Context) ([]Snapshot, error) {
+	cmd := v.resticCmd(ctx, "snapshots", "--json")
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("failed to list snapshots: %w", err)
+	}
+
+	var snaps []Snapshot
+	if err := json.Unmarshal(out, &snaps); err != nil {
+		return nil, fmt.Errorf("failed to parse snapshots: %w", err)
+	}
+
+	v.mu.Lock()
+	v.status.Snapshots = len(snaps)
+	v.mu.Unlock()
+
+	return snaps, nil
+}
+
+// Restore restores a snapshot to a target directory.
+func (v *Vault) Restore(ctx context.Context, snapshotID, targetDir string) error {
+	cmd := v.resticCmd(ctx, "restore", snapshotID, "--target", targetDir)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("restore failed: %s", out)
+	}
+	log.Printf("[vault] restored snapshot %s to %s", snapshotID, targetDir)
+	return nil
+}
+
+// Prune removes old snapshots keeping the last N.
+func (v *Vault) Prune(ctx context.Context, keepLast int) error {
+	cmd := v.resticCmd(ctx, "forget", "--keep-last", fmt.Sprintf("%d", keepLast), "--prune")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("prune failed: %s", out)
+	}
+	log.Printf("[vault] pruned, keeping last %d snapshots", keepLast)
+	return nil
+}
+
+// Status returns the current vault status.
+func (v *Vault) Status() Status {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return v.status
+}
+
+// StartSchedule runs automatic backups at the given interval.
+func (v *Vault) StartSchedule(ctx context.Context, interval time.Duration) {
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if err := v.Backup(ctx); err != nil {
+					log.Printf("[vault] scheduled backup error: %v", err)
+				}
+			}
+		}
+	}()
+	log.Printf("[vault] scheduled backups every %s", interval)
+}
+
+func (v *Vault) resticCmd(ctx context.Context, args ...string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, "restic", args...)
+	cmd.Env = append(os.Environ(), v.s3.ResticEnv()...)
+	cmd.Env = append(cmd.Env, "RESTIC_PASSWORD="+v.password)
+	return cmd
+}
+
+// FindRestic checks if restic is installed.
+func FindRestic() bool {
+	_, err := exec.LookPath("restic")
+	return err == nil
+}
+
+func getenv(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
+}
+
+// DataDir returns the default data directory to back up.
+func DataDir() string {
+	home, _ := os.UserHomeDir()
+	d := filepath.Join(home, ".vulos", "data")
+	os.MkdirAll(d, 0755)
+	return d
+}

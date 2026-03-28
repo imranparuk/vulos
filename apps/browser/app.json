@@ -1,0 +1,14 @@
+{
+  "id": "browser",
+  "name": "Smart Browser",
+  "icon": "◎",
+  "description": "Ad-free web with AI summaries",
+  "version": "0.1.0",
+  "command": "python3 server.py",
+  "port": 80,
+  "category": "core",
+  "keywords": ["browser", "web", "internet", "surf"],
+  "deps": ["python3"],
+  "auto_start": false,
+  "singleton": true
+}

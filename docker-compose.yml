@@ -1,0 +1,40 @@
+# Vula OS — Dev Environment
+# Usage:
+#   docker compose up        → backend on :8080, frontend on :5173
+#   docker compose up --build → rebuild everything
+#
+# Open http://localhost:5173 for dev (hot reload)
+# Open http://localhost:8080 for production build
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    volumes:
+      - vulos-data:/root/.vulos
+    environment:
+      - PORT=8080
+      - AI_PROVIDER=ollama
+      - AI_ENDPOINT=http://host.docker.internal:11434
+      - VULOS_DEV=true
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  frontend:
+    image: node:22-alpine
+    working_dir: /app
+    ports:
+      - "5173:5173"
+    volumes:
+      - .:/app
+      - node_modules:/app/node_modules
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
+    environment:
+      - VITE_API_URL=http://localhost:8080
+
+volumes:
+  vulos-data:
+  node_modules:

@@ -1,0 +1,101 @@
+// Apps with builtin:true render as React components in the shell.
+// Apps with url/port are external services launched via the backend.
+// Apps with installed:false are available in the app store but not yet installed.
+
+const registry = [
+  // --- Built-in (React components in src/builtin/, no port needed) ---
+  {
+    id: 'terminal',
+    name: 'Terminal',
+    icon: '>_',
+    description: 'System shell',
+    keywords: ['terminal', 'shell', 'bash', 'sh', 'command', 'cli', 'console'],
+    category: 'system',
+    builtin: true,
+  },
+  {
+    id: 'activity',
+    name: 'Activity Monitor',
+    icon: '◉',
+    description: 'System resource monitor',
+    keywords: ['htop', 'cpu', 'ram', 'monitor', 'process', 'activity', 'task'],
+    category: 'system',
+    builtin: true,
+  },
+  {
+    id: 'files',
+    name: 'File Manager',
+    icon: '⊡',
+    description: 'Browse files with semantic search',
+    keywords: ['files', 'browse', 'folder', 'explorer', 'finder', 'search'],
+    category: 'system',
+    builtin: true,
+  },
+  {
+    id: 'persona',
+    name: 'Settings',
+    icon: '⚙',
+    description: 'System settings & AI config',
+    keywords: ['settings', 'preferences', 'config', 'persona', 'ai'],
+    category: 'system',
+    builtin: true,
+  },
+
+  {
+    id: 'browser',
+    name: 'Smart Browser',
+    icon: '◎',
+    description: 'Ad-free web with AI summaries',
+    keywords: ['browser', 'web', 'internet', 'surf'],
+    category: 'core',
+    builtin: true,
+  },
+
+  // --- Installed app services (have implementations in /apps/) ---
+  {
+    id: 'library',
+    name: 'Universal Memory',
+    icon: '☰',
+    description: 'Notes & knowledge base',
+    keywords: ['notes', 'write', 'knowledge', 'library', 'wiki', 'memory'],
+    port: 80,
+    category: 'productivity',
+  },
+  {
+    id: 'gallery',
+    name: 'Media Gallery',
+    icon: '◫',
+    description: 'Photos, videos & media',
+    keywords: ['photos', 'video', 'media', 'gallery', 'images'],
+    port: 80,
+    category: 'media',
+  },
+]
+
+export function getApps() {
+  return registry
+}
+
+export function getAppById(id) {
+  return registry.find(app => app.id === id)
+}
+
+export function getAppsByCategory() {
+  const cats = {}
+  for (const app of registry) {
+    const c = app.category || 'other'
+    if (!cats[c]) cats[c] = []
+    cats[c].push(app)
+  }
+  return cats
+}
+
+export function searchApps(query) {
+  const q = query.toLowerCase().trim()
+  if (!q) return registry
+  return registry.filter(app =>
+    app.name.toLowerCase().includes(q) ||
+    app.description.toLowerCase().includes(q) ||
+    app.keywords.some(k => k.includes(q))
+  )
+}

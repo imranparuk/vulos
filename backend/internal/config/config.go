@@ -1,7 +1,6 @@
 package config
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -14,8 +13,7 @@ var (
 )
 
 type Config struct {
-	DatabaseURL string
-	Port        string
+	Port string
 }
 
 func Load(env string) *Config {
@@ -56,14 +54,7 @@ func Load(env string) *Config {
 		return fallback
 	}
 
-	cfg := &Config{
-		DatabaseURL: get("DATABASE_URL", ""),
-		Port:        get("PORT", "8080"),
+	return &Config{
+		Port: get("PORT", "8080"),
 	}
-
-	if cfg.DatabaseURL == "" {
-		fmt.Fprintf(os.Stderr, "WARNING: DATABASE_URL not set (%s)\n", envFile)
-	}
-
-	return cfg
 }
