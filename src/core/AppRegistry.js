@@ -43,9 +43,9 @@ const registry = [
 
   {
     id: 'browser',
-    name: 'Smart Browser',
+    name: 'Browser',
     icon: '◎',
-    description: 'Ad-free web with AI summaries',
+    description: 'Web browser',
     keywords: ['browser', 'web', 'internet', 'surf'],
     category: 'core',
     builtin: true,

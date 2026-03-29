@@ -2,7 +2,7 @@ import { useRef, useCallback, useState } from 'react'
 import { useShell } from '../providers/ShellProvider'
 
 export default function Window({ win }) {
-  const { closeWindow, focusWindow, moveWindow, resizeWindow, minimizeWindow, activeWindow, popoutApp } = useShell()
+  const { closeWindow, focusWindow, moveWindow, resizeWindow, minimizeWindow, maximizeWindow, activeWindow } = useShell()
   const [dragging, setDragging] = useState(false)
   const isActive = win._active !== undefined ? win._active : activeWindow === win.id
   const zBase = isActive ? 20 : 10
@@ -72,7 +72,7 @@ export default function Window({ win }) {
         <div className="flex items-center gap-1.5" data-no-drag>
           <button onClick={() => closeWindow(win.id)} className="w-3 h-3 rounded-full bg-neutral-700 hover:bg-red-500 transition-colors" />
           <button onClick={() => minimizeWindow(win.id)} className="w-3 h-3 rounded-full bg-neutral-700 hover:bg-yellow-500 transition-colors" />
-          <span className="w-3 h-3 rounded-full bg-neutral-700" />
+          <button onClick={() => maximizeWindow(win.id)} className="w-3 h-3 rounded-full bg-neutral-700 hover:bg-green-500 transition-colors" />
         </div>
         <div className="flex-1 text-center text-xs text-neutral-500 truncate">{win.icon} {win.title}</div>
         {/* Save AI viewport button */}
@@ -95,15 +95,6 @@ export default function Window({ win }) {
             💾
           </button>
         )}
-        {/* Pop out button */}
-        <button
-          data-no-drag
-          onClick={() => popoutApp({ title: win.title, url: win.url, icon: win.icon, appId: win.appId })}
-          title="Pop out to fullscreen"
-          className="w-5 h-5 flex items-center justify-center rounded-full bg-neutral-800 hover:bg-blue-600 text-neutral-500 hover:text-white text-[9px] transition-colors mr-1"
-        >
-          ⤢
-        </button>
       </div>
 
       {/* Content */}

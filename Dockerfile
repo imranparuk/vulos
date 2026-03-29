@@ -1,7 +1,7 @@
 # Vula OS — Container
 #
 # Build: docker build -t vulos .
-# Run:   docker run -p 8080:8080 vulos
+# Run:   docker run -p 8080:8080 --shm-size=1g vulos
 # Open:  http://localhost:8080
 
 FROM node:22-alpine AS frontend
@@ -21,13 +21,14 @@ RUN go mod download && go build -ldflags="-s -w" -o /vulos-server ./cmd/server
 
 FROM alpine:edge
 
-# Core packages + Mozilla CA bundle
-RUN apk add --no-cache python3 curl jq ca-certificates \
+# Core packages + remote browser stack (Xvfb + Chromium + GStreamer)
+RUN apk add --no-cache \
+    python3 curl jq ca-certificates \
+    xvfb-run chromium xdotool \
+    gstreamer-tools gst-plugins-base gst-plugins-good gst-plugins-bad \
+    pulseaudio pulseaudio-utils \
+    font-noto socat \
     && curl -fsSL https://curl.se/ca/cacert.pem -o /etc/ssl/certs/ca-certificates.crt
-
-# Docker CLI for launching neko browser container
-RUN apk add --no-cache docker-cli 2>/dev/null || \
-    echo "Docker CLI not available — browser will try native neko binary"
 
 RUN mkdir -p /opt/vulos/webroot /opt/vulos/apps \
     /var/lib/vulos /root/.vulos/data /root/.vulos/db /root/.vulos/sandbox \
@@ -46,6 +47,7 @@ ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 ENV XDG_RUNTIME_DIR=/tmp/xdg-runtime
 ENV WLR_BACKENDS=headless
 ENV WLR_RENDERER=pixman
+ENV DISPLAY=:99
 
 EXPOSE 8080
 CMD ["/usr/local/bin/vulos-server", "-env", "local"]

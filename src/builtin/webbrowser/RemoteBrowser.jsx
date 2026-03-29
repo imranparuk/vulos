@@ -1,56 +1,200 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 
 export default function RemoteBrowser() {
-  const [nekoUrl, setNekoUrl] = useState(null)
+  const videoRef = useRef(null)
+  const wsRef = useRef(null)
+  const pcRef = useRef(null)
+  const dcRef = useRef(null)
+  const containerRef = useRef(null)
+  const connectedRef = useRef(false)
+  const lastMouseRef = useRef(0)
+  const lastScrollRef = useRef(0)
+  const [status, setStatus] = useState('connecting')
   const [error, setError] = useState(null)
 
-  useEffect(() => {
-    // Get neko connection details from vulos server (authenticated)
-    fetch('/api/browser/connect')
-      .then(r => r.ok ? r.json() : null)
-      .then(data => {
-        if (data?.url) {
-          setNekoUrl(data.url)
-        } else {
-          setError(data?.error || 'Browser service not running. It starts automatically with the OS.')
-        }
-      })
-      .catch(() => setError('Could not reach server'))
-  }, [])
-
-  // On local Cage/WPE kiosk — just open URLs directly
   if (navigator.userAgent.includes('WPE') || navigator.userAgent.includes('Cog')) {
     return <LocalBrowser />
   }
+
+  const sendInput = useCallback((evt) => {
+    const dc = dcRef.current
+    if (!dc || dc.readyState !== 'open') return
+    dc.send(JSON.stringify(evt))
+  }, [])
+
+  const connect = useCallback(async () => {
+    pcRef.current?.close()
+    wsRef.current?.close()
+    connectedRef.current = false
+    setStatus('connecting')
+    setError(null)
+
+    try {
+      const res = await fetch('/api/browser/status')
+      const data = await res.json()
+      if (!data.running) {
+        setError('Browser service not running')
+        return
+      }
+
+      const pc = new RTCPeerConnection({
+        iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+      })
+      pcRef.current = pc
+
+      pc.ontrack = (e) => {
+        if (videoRef.current && e.streams[0]) {
+          videoRef.current.srcObject = e.streams[0]
+          connectedRef.current = true
+          setStatus('connected')
+        }
+      }
+
+      pc.oniceconnectionstatechange = () => {
+        const state = pc.iceConnectionState
+        if (state === 'failed') setError('Connection failed')
+        else if (state === 'disconnected') {
+          setTimeout(() => {
+            if (pc.iceConnectionState === 'disconnected') setError('Connection lost')
+          }, 5000)
+        }
+      }
+
+      const dc = pc.createDataChannel('input', { ordered: false, maxRetransmits: 0 })
+      dcRef.current = dc
+      pc.addTransceiver('video', { direction: 'recvonly' })
+
+      const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
+      const ws = new WebSocket(`${proto}//${location.host}/api/browser/ws`)
+      wsRef.current = ws
+
+      ws.onmessage = (e) => {
+        const msg = JSON.parse(e.data)
+        if (msg.type === 'answer') pc.setRemoteDescription(new RTCSessionDescription({ type: 'answer', sdp: msg.sdp }))
+        else if (msg.type === 'candidate' && msg.candidate) pc.addIceCandidate(new RTCIceCandidate(msg.candidate))
+      }
+
+      ws.onopen = async () => {
+        const offer = await pc.createOffer()
+        await pc.setLocalDescription(offer)
+        pc.onicecandidate = (e) => {
+          if (e.candidate) ws.send(JSON.stringify({ type: 'candidate', candidate: e.candidate.toJSON() }))
+        }
+        ws.send(JSON.stringify({ type: 'offer', sdp: offer.sdp }))
+      }
+
+      ws.onerror = () => { if (!connectedRef.current) setError('WebSocket connection failed') }
+      ws.onclose = () => { if (!connectedRef.current) setError('Signaling connection lost') }
+    } catch (err) {
+      setError(err.message)
+    }
+  }, [])
+
+  useEffect(() => {
+    connect()
+    return () => { pcRef.current?.close(); wsRef.current?.close() }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const focusContainer = useCallback(() => containerRef.current?.focus(), [])
+
+  const getPos = useCallback((e) => {
+    const video = videoRef.current
+    if (!video) return { x: 0, y: 0 }
+    const rect = video.getBoundingClientRect()
+    return {
+      x: Math.round((e.clientX - rect.left) * (1280 / rect.width)),
+      y: Math.round((e.clientY - rect.top) * (720 / rect.height))
+    }
+  }, [])
+
+  const onMouseMove = useCallback((e) => {
+    const now = performance.now()
+    if (now - lastMouseRef.current < 16) return
+    lastMouseRef.current = now
+    sendInput({ type: 'mousemove', ...getPos(e) })
+  }, [getPos, sendInput])
+
+  const onMouseDown = useCallback((e) => {
+    e.preventDefault()
+    focusContainer()
+    sendInput({ type: 'mousedown', ...getPos(e), button: e.button })
+  }, [getPos, sendInput, focusContainer])
+
+  const onMouseUp = useCallback((e) => sendInput({ type: 'mouseup', button: e.button }), [sendInput])
+
+  const onWheel = useCallback((e) => {
+    e.preventDefault()
+    const now = performance.now()
+    if (now - lastScrollRef.current < 50) return
+    lastScrollRef.current = now
+    // Normalize deltaY across browsers/trackpads — clamp to reasonable range
+    let dy = e.deltaY
+    if (e.deltaMode === 1) dy *= 40 // line mode
+    else if (e.deltaMode === 2) dy *= 800 // page mode
+    // Convert pixel delta to scroll clicks (3 pixels per click, clamped 1-5)
+    const clicks = Math.min(5, Math.max(1, Math.round(Math.abs(dy) / 40)))
+    sendInput({ type: 'scroll', x: 0, y: dy > 0 ? clicks : -clicks })
+  }, [sendInput])
+
+  const onKeyDown = useCallback((e) => {
+    // Let Escape bubble to shell for window management
+    if (e.key === 'Escape') return
+    e.preventDefault()
+    e.stopPropagation()
+    sendInput({ type: 'keydown', key: e.key, code: e.code })
+  }, [sendInput])
+
+  const onKeyUp = useCallback((e) => {
+    if (e.key === 'Escape') return
+    e.preventDefault()
+    e.stopPropagation()
+    sendInput({ type: 'keyup', key: e.key, code: e.code })
+  }, [sendInput])
+
+  useEffect(() => {
+    if (status === 'connected') focusContainer()
+  }, [status, focusContainer])
 
   if (error) {
     return (
       <div className="flex items-center justify-center h-full bg-neutral-950 text-neutral-500 text-sm">
         <div className="text-center space-y-2">
           <p>{error}</p>
-          <button onClick={() => window.location.reload()} className="btn">Retry</button>
+          <button onClick={connect} className="btn">Retry</button>
         </div>
       </div>
     )
   }
 
-  if (!nekoUrl) {
-    return (
-      <div className="flex items-center justify-center h-full bg-neutral-950">
-        <span className="text-neutral-600 text-sm flex items-center gap-2">
-          <span className="w-4 h-4 border-2 border-neutral-600 border-t-blue-500 rounded-full animate-spin" />
-          Connecting to browser...
-        </span>
-      </div>
-    )
-  }
-
   return (
-    <iframe
-      src={nekoUrl}
-      className="w-full h-full border-0"
-      allow="autoplay; clipboard-write; clipboard-read; encrypted-media; microphone; camera"
-    />
+    <div
+      ref={containerRef}
+      className="w-full h-full bg-neutral-950 outline-none overflow-hidden"
+      tabIndex={0}
+      onMouseMove={onMouseMove}
+      onMouseDown={onMouseDown}
+      onMouseUp={onMouseUp}
+      onWheel={onWheel}
+      onKeyDown={onKeyDown}
+      onKeyUp={onKeyUp}
+      onContextMenu={e => e.preventDefault()}
+      onClick={focusContainer}
+    >
+      {status === 'connecting' && (
+        <div className="absolute inset-0 flex items-center justify-center z-10">
+          <span className="text-neutral-600 text-sm flex items-center gap-2">
+            <span className="w-4 h-4 border-2 border-neutral-600 border-t-blue-500 rounded-full animate-spin" />
+            Connecting...
+          </span>
+        </div>
+      )}
+      <video
+        ref={videoRef}
+        autoPlay playsInline
+        className="w-full h-full"
+        style={{ cursor: 'none', objectFit: 'fill' }}
+      />
+    </div>
   )
 }
 

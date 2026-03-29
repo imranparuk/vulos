@@ -184,13 +184,12 @@ func main() {
 	// Browser profiles (isolated cookie jars / contexts)
 	browserProfiles := bprofiles.NewStore(filepath.Join(home, ".vulos", "db"))
 
-	// Remote browser (neko — starts with OS, always ready)
+	// Remote browser (Xvfb + Chromium + GStreamer → WebRTC, starts at boot)
 	browserSvc := webbrowser.New()
 	if err := browserSvc.Start(ctx, 0); err != nil {
 		log.Printf("[browser] start warning: %v", err)
 	} else {
 		browserSvc.WaitReady(30 * time.Second)
-		log.Printf("[browser] neko ready")
 	}
 
 	// Web proxy (for remote mode — kept for API proxy use)
@@ -988,31 +987,8 @@ func main() {
 		writeJSON(w, displaySvc.GetStatus(r.Context()))
 	})
 
-	// Remote browser — neko
-	mux.HandleFunc("GET /api/browser/status", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, map[string]any{"running": browserSvc.Running(), "port": browserSvc.Port()})
-	})
-	// Returns neko URL with auto-login credentials (auth-protected endpoint)
-	mux.HandleFunc("GET /api/browser/connect", func(w http.ResponseWriter, r *http.Request) {
-		if !browserSvc.Running() {
-			writeErr(w, 503, "browser not running")
-			return
-		}
-		// Credentials are server-side only — client gets a ready-to-use URL
-		nekoURL := fmt.Sprintf("%s//%s:%d/?usr=vulos&pwd=vulos",
-			r.URL.Scheme, r.Host, browserSvc.Port())
-		// If scheme is empty (behind proxy), use the request's protocol
-		if r.TLS != nil {
-			nekoURL = fmt.Sprintf("https://%s:%d/?usr=vulos&pwd=vulos", r.Host, browserSvc.Port())
-		} else {
-			host := r.Host
-			if idx := strings.Index(host, ":"); idx > 0 {
-				host = host[:idx]
-			}
-			nekoURL = fmt.Sprintf("http://%s:%d/?usr=vulos&pwd=vulos", host, browserSvc.Port())
-		}
-		writeJSON(w, map[string]any{"url": nekoURL, "running": true})
-	})
+	// Remote browser — WebRTC
+	browserSvc.RegisterHandlers(mux)
 
 	// Web proxy (kept for API-level proxying)
 	mux.HandleFunc("/api/proxy/ws/", proxySvc.WSRelayHandler())

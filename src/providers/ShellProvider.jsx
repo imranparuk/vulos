@@ -71,6 +71,27 @@ function shellReducer(state, action) {
       desktops[state.activeDesktop] = desk
       return { ...state, desktops }
     }
+    case 'MAXIMIZE_WINDOW': {
+      const desktops = { ...state.desktops }
+      const desk = { ...desktops[state.activeDesktop] }
+      desk.windows = desk.windows.map(w => {
+        if (w.id !== action.id) return w
+        if (w._maximized) {
+          return { ...w, position: w._prevPosition, size: w._prevSize, _maximized: false }
+        }
+        // Position below menu bar (32px), above dock (64px)
+        // Note: windows are absolutely positioned in inset-0 container,
+        // so y must account for menu bar height
+        return {
+          ...w,
+          _prevPosition: w.position, _prevSize: w.size, _maximized: true,
+          position: { x: 0, y: 32 },
+          size: { width: window.innerWidth, height: window.innerHeight - 32 - 64 },
+        }
+      })
+      desktops[state.activeDesktop] = desk
+      return { ...state, desktops }
+    }
     case 'MINIMIZE_WINDOW': {
       const desktops = { ...state.desktops }
       const desk = { ...desktops[state.activeDesktop] }
@@ -251,6 +272,7 @@ export function ShellProvider({ children }) {
   const moveWindow = useCallback((id, position) => dispatch({ type: 'MOVE_WINDOW', id, position }), [])
   const resizeWindow = useCallback((id, size) => dispatch({ type: 'RESIZE_WINDOW', id, size }), [])
   const minimizeWindow = useCallback((id) => dispatch({ type: 'MINIMIZE_WINDOW', id }), [])
+  const maximizeWindow = useCallback((id) => dispatch({ type: 'MAXIMIZE_WINDOW', id }), [])
 
   const switchDesktop = useCallback((id) => dispatch({ type: 'SWITCH_DESKTOP', id }), [])
   const addDesktop = useCallback((label) => dispatch({ type: 'ADD_DESKTOP', label }), [])
@@ -277,7 +299,7 @@ export function ShellProvider({ children }) {
       conversation: state.conversation, thinking: state.thinking,
       launchpadOpen: state.launchpadOpen, chatOpen: state.chatOpen,
       layout,
-      openWindow, closeWindow, focusWindow, moveWindow, resizeWindow, minimizeWindow,
+      openWindow, closeWindow, focusWindow, moveWindow, resizeWindow, minimizeWindow, maximizeWindow,
       switchDesktop, addDesktop, removeDesktop, moveWindowToDesktop,
       popoutApp, closePopout,
       toggleLaunchpad, setLaunchpad, toggleChat, setChat,
